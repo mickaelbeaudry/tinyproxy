@@ -49,6 +49,7 @@
 #include "connect-ports.h"
 #include "conf.h"
 #include "basicauth.h"
+#include "loop.h"
 
 /*
  * Maximum length of a HTTP line
@@ -1533,7 +1534,7 @@ get_request_entity(struct conn_s *connptr)
  * tinyproxy code, which was confusing, redundant. Hail progress.
  * 	- rjkaes
  */
-void handle_connection (int fd)
+void handle_connection (int fd, union sockaddr_union* addr)
 {
         ssize_t i;
         struct conn_s *connptr;
@@ -1542,26 +1543,39 @@ void handle_connection (int fd)
 
         char sock_ipaddr[IP_LENGTH];
         char peer_ipaddr[IP_LENGTH];
-        char peer_string[HOSTNAME_LENGTH];
 
-        getpeer_information (fd, peer_ipaddr, peer_string);
+        getpeer_information (addr, peer_ipaddr, sizeof(peer_ipaddr));
 
         if (config.bindsame)
                 getsock_ip (fd, sock_ipaddr);
 
         log_message (LOG_CONN, config.bindsame ?
-                     "Connect (file descriptor %d): %s [%s] at [%s]" :
-                     "Connect (file descriptor %d): %s [%s]",
-                     fd, peer_string, peer_ipaddr, sock_ipaddr);
+                     "Connect (file descriptor %d): %s at [%s]" :
+                     "Connect (file descriptor %d): %s",
+                     fd, peer_ipaddr, sock_ipaddr);
 
-        connptr = initialize_conn (fd, peer_ipaddr, peer_string,
+        connptr = initialize_conn (fd, peer_ipaddr,
                                    config.bindsame ? sock_ipaddr : NULL);
         if (!connptr) {
                 close (fd);
                 return;
         }
 
-        if (check_acl (peer_ipaddr, peer_string, config.access_list) <= 0) {
+        if (connection_loops (addr))  {
+                log_message (LOG_CONN,
+                             "Prevented endless loop (file descriptor %d): %s",
+                             fd, peer_ipaddr);
+
+                indicate_http_error(connptr, 400, "Bad Request",
+                                    "detail",
+                                    "You tried to connect to the "
+                                    "machine the proxy is running on",
+                                    NULL);
+                goto fail;
+        }
+
+
+        if (check_acl (peer_ipaddr, addr, config.access_list) <= 0) {
                 update_stats (STAT_DENIED);
                 indicate_http_error (connptr, 403, "Access denied",
                                      "detail",

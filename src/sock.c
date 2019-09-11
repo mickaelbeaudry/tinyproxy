@@ -33,6 +33,7 @@
 #include "sock.h"
 #include "text.h"
 #include "conf.h"
+#include "loop.h"
 
 /*
  * Bind the given socket to the supplied address.  The socket is
@@ -125,8 +126,17 @@ int opensock (const char *host, int port, const char *bind_to)
                         }
                 }
 
-                if (connect (sockfd, res->ai_addr, res->ai_addrlen) == 0)
+                if (connect (sockfd, res->ai_addr, res->ai_addrlen) == 0) {
+                        union sockaddr_union *p = (void*) res->ai_addr, u;
+			int af = res->ai_addr->sa_family;
+                        unsigned dport = ntohs(af == AF_INET ? p->v4.sin_port : p->v6.sin6_port);
+                        socklen_t slen = sizeof u;
+                        if (dport == config.port) {
+                                getsockname(sockfd, (void*)&u, &slen);
+                                loop_records_add(&u);
+                        }
                         break;  /* success */
+		}
 
                 close (sockfd);
         } while ((res = res->ai_next) != NULL);
@@ -334,27 +344,9 @@ int getsock_ip (int fd, char *ipaddr)
 /*
  * Return the peer's socket information.
  */
-int getpeer_information (int fd, char *ipaddr, char *string_addr)
+void getpeer_information (union sockaddr_union* addr, char *ipaddr, size_t ipaddr_len)
 {
-        struct sockaddr_storage sa;
-        socklen_t salen = sizeof sa;
-
-        assert (fd >= 0);
-        assert (ipaddr != NULL);
-        assert (string_addr != NULL);
-
-        /* Set the strings to default values */
-        ipaddr[0] = '\0';
-        strlcpy (string_addr, "[unknown]", HOSTNAME_LENGTH);
-
-        /* Look up the IP address */
-        if (getpeername (fd, (struct sockaddr *) &sa, &salen) != 0)
-                return -1;
-
-        if (get_ip_string ((struct sockaddr *) &sa, ipaddr, IP_LENGTH) == NULL)
-                return -1;
-
-        /* Get the full host name */
-        return getnameinfo ((struct sockaddr *) &sa, salen,
-                            string_addr, HOSTNAME_LENGTH, NULL, 0, 0);
+        int af = addr->v4.sin_family;
+        void *ipdata = af == AF_INET ? (void*)&addr->v4.sin_addr : (void*)&addr->v6.sin6_addr;
+        inet_ntop(af, ipdata, ipaddr, ipaddr_len);
 }

@@ -27,7 +27,6 @@
 
 #include "acl.h"
 #include "anonymous.h"
-#include "child.h"
 #include "filter.h"
 #include "heap.h"
 #include "html-error.h"
@@ -92,7 +91,8 @@
  * All configuration handling functions are REQUIRED to be defined
  * with the same function template as below.
  */
-typedef int (*CONFFILE_HANDLER) (struct config_s *, const char *, regmatch_t[]);
+typedef int (*CONFFILE_HANDLER) (struct config_s *, const char *,
+             unsigned long, regmatch_t[]);
 
 /*
  * Define the pattern used by any directive handling function.  The
@@ -107,7 +107,7 @@ typedef int (*CONFFILE_HANDLER) (struct config_s *, const char *, regmatch_t[]);
  */
 #define HANDLE_FUNC(func) \
   int func(struct config_s* conf, const char* line, \
-           regmatch_t match[])
+           unsigned long lineno, regmatch_t match[])
 
 /*
  * List all the handling functions.  These are defined later, but they need
@@ -140,9 +140,7 @@ static HANDLE_FUNC (handle_listen);
 static HANDLE_FUNC (handle_logfile);
 static HANDLE_FUNC (handle_loglevel);
 static HANDLE_FUNC (handle_maxclients);
-static HANDLE_FUNC (handle_maxrequestsperchild);
-static HANDLE_FUNC (handle_maxspareservers);
-static HANDLE_FUNC (handle_minspareservers);
+static HANDLE_FUNC (handle_obsolete);
 static HANDLE_FUNC (handle_pidfile);
 static HANDLE_FUNC (handle_port);
 #ifdef REVERSE_SUPPORT
@@ -151,7 +149,6 @@ static HANDLE_FUNC (handle_reversemagic);
 static HANDLE_FUNC (handle_reverseonly);
 static HANDLE_FUNC (handle_reversepath);
 #endif
-static HANDLE_FUNC (handle_startservers);
 static HANDLE_FUNC (handle_statfile);
 static HANDLE_FUNC (handle_stathost);
 static HANDLE_FUNC (handle_syslog);
@@ -217,10 +214,10 @@ struct {
         /* integer arguments */
         STDCONF ("port", INT, handle_port),
         STDCONF ("maxclients", INT, handle_maxclients),
-        STDCONF ("maxspareservers", INT, handle_maxspareservers),
-        STDCONF ("minspareservers", INT, handle_minspareservers),
-        STDCONF ("startservers", INT, handle_startservers),
-        STDCONF ("maxrequestsperchild", INT, handle_maxrequestsperchild),
+        STDCONF ("maxspareservers", INT, handle_obsolete),
+        STDCONF ("minspareservers", INT, handle_obsolete),
+        STDCONF ("startservers", INT, handle_obsolete),
+        STDCONF ("maxrequestsperchild", INT, handle_obsolete),
         STDCONF ("timeout", INT, handle_timeout),
         STDCONF ("connectport", INT, handle_connectport),
         /* alphanumeric arguments */
@@ -378,7 +375,8 @@ config_free_regex (void)
  * Returns 0 if a match was found and successfully processed; otherwise,
  * a negative number is returned.
  */
-static int check_match (struct config_s *conf, const char *line)
+static int check_match (struct config_s *conf, const char *line,
+                        unsigned long lineno)
 {
         regmatch_t match[RE_MAX_MATCHES];
         unsigned int i;
@@ -389,7 +387,7 @@ static int check_match (struct config_s *conf, const char *line)
                 assert (directives[i].cre);
                 if (!regexec
                     (directives[i].cre, line, RE_MAX_MATCHES, match, 0))
-                        return (*directives[i].handler) (conf, line, match);
+                        return (*directives[i].handler) (conf, line, lineno, match);
         }
 
         return -1;
@@ -404,7 +402,7 @@ static int config_parse (struct config_s *conf, FILE * f)
         unsigned long lineno = 1;
 
         while (fgets (buffer, sizeof (buffer), f)) {
-                if (check_match (conf, buffer)) {
+                if (check_match (conf, buffer, lineno)) {
                         printf ("Syntax error on line %ld\n", lineno);
                         return 1;
                 }
@@ -805,34 +803,14 @@ static HANDLE_FUNC (handle_port)
 
 static HANDLE_FUNC (handle_maxclients)
 {
-        child_configure (CHILD_MAXCLIENTS, get_long_arg (line, &match[2]));
+        set_int_arg (&conf->maxclients, line, &match[2]);
         return 0;
 }
 
-static HANDLE_FUNC (handle_maxspareservers)
+static HANDLE_FUNC (handle_obsolete)
 {
-        child_configure (CHILD_MAXSPARESERVERS,
-                         get_long_arg (line, &match[2]));
-        return 0;
-}
-
-static HANDLE_FUNC (handle_minspareservers)
-{
-        child_configure (CHILD_MINSPARESERVERS,
-                         get_long_arg (line, &match[2]));
-        return 0;
-}
-
-static HANDLE_FUNC (handle_startservers)
-{
-        child_configure (CHILD_STARTSERVERS, get_long_arg (line, &match[2]));
-        return 0;
-}
-
-static HANDLE_FUNC (handle_maxrequestsperchild)
-{
-        child_configure (CHILD_MAXREQUESTSPERCHILD,
-                         get_long_arg (line, &match[2]));
+        fprintf (stderr, "WARNING: obsolete config item on line %lu\n",
+                 lineno);
         return 0;
 }
 
